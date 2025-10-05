@@ -9,14 +9,14 @@ on:
   workflow_dispatch:  # Allows manual triggering from GitHub UI
 
 env:
-  DOTNET_VERSION: '8.0.x'
-  TEST_PROJECT_PATH: 'RestfulApiDevTests/RestfulApiDevTests.csproj'
+  DOTNET_VERSION: '9.0.x'
+  TEST_PROJECT_PATH: 'C:/Users/Shashank Goyal/source/repos/RestfulApiDevTests/RestfulApiDevTests.csproj'
 
 jobs:
   test:
     name: Run API Tests
-    runs-on: Windows-latest
-    
+    runs-on: windows-latest
+    C:\Users\Shashank Goyal\source\repos\RestfulApiDevTests
     steps:
       # Step 1: Checkout the repository
       - name: 📥 Checkout Repository
