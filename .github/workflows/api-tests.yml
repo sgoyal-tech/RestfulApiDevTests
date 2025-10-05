@@ -3,14 +3,13 @@ name: API Tests CI Pipeline
 # Trigger the workflow on push or pull request
 on:
   push:
-    branches: [ master ]
+    branches: [ main, develop ]
   pull_request:
-    branches: [ master ]
+    branches: [ main ]
   workflow_dispatch:  # Allows manual triggering from GitHub UI
 
 env:
   DOTNET_VERSION: '8.0.x'
-  PROJECT_PATH: 'RestfulApiDevTests/RestfulApiDevTests.csproj'
 
 jobs:
   test:
@@ -22,50 +21,72 @@ jobs:
       - name: 📥 Checkout Repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # Fetch all history for better analysis
+          fetch-depth: 0
 
-      # Step 2: Setup .NET SDK
+      # Step 2: List directory structure for debugging
+      - name: 🔍 Debug - List Directory Structure
+        shell: pwsh
+        run: |
+          Write-Host "Current directory:"
+          Get-Location
+          Write-Host "`nDirectory contents:"
+          Get-ChildItem -Recurse -Depth 2 | Select-Object FullName
+
+      # Step 3: Setup .NET SDK
       - name: 🔧 Setup .NET ${{ env.DOTNET_VERSION }}
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
 
-      # Step 3: Display .NET version
+      # Step 4: Display .NET version
       - name: 📋 Display .NET version
         run: dotnet --version
 
-      # Step 4: Restore dependencies
+      # Step 5: Find and restore project
       - name: 📦 Restore Dependencies
-        run: dotnet restore "${{ env.PROJECT_PATH }}"
+        shell: pwsh
+        run: |
+          $projectFile = Get-ChildItem -Recurse -Filter "*.csproj" | Select-Object -First 1
+          if ($projectFile) {
+            Write-Host "Found project file: $($projectFile.FullName)"
+            dotnet restore $projectFile.FullName
+          } else {
+            Write-Error "No .csproj file found!"
+            exit 1
+          }
 
-      # Step 5: Build the project
+      # Step 6: Build the project
       - name: 🏗️ Build Project
-        run: dotnet build "${{ env.PROJECT_PATH }}" --configuration Release --no-restore
+        shell: pwsh
+        run: |
+          $projectFile = Get-ChildItem -Recurse -Filter "*.csproj" | Select-Object -First 1
+          dotnet build $projectFile.FullName --configuration Release --no-restore
 
-      # Step 6: Run the tests
+      # Step 7: Run the tests
       - name: 🧪 Run API Tests
         shell: pwsh
         run: |
-          dotnet test "${{ env.PROJECT_PATH }}" `
+          $projectFile = Get-ChildItem -Recurse -Filter "*.csproj" | Select-Object -First 1
+          dotnet test $projectFile.FullName `
             --configuration Release `
             --no-build `
             --verbosity normal `
             --logger "trx;LogFileName=test-results.trx" `
             --logger "html;LogFileName=test-results.html" `
             --results-directory TestResults
-        continue-on-error: true  # Continue to upload results even if tests fail
+        continue-on-error: true
 
-      # Step 7: Publish test results
+      # Step 8: Publish test results
       - name: 📊 Publish Test Results
         uses: EnricoMi/publish-unit-test-result-action/composite@v2
-        if: always()  # Run even if previous steps fail
+        if: always()
         with:
           files: |
             TestResults/**/*.trx
           check_name: 'API Test Results'
           comment_title: '🧪 API Test Results'
 
-      # Step 8: Upload test results as artifacts
+      # Step 9: Upload test results as artifacts
       - name: 📤 Upload Test Results Artifact
         uses: actions/upload-artifact@v4
         if: always()
@@ -74,7 +95,7 @@ jobs:
           path: TestResults/
           retention-days: 30
 
-      # Step 9: Generate test summary
+      # Step 10: Generate test summary
       - name: 📝 Generate Test Summary
         if: always()
         shell: pwsh
@@ -101,7 +122,7 @@ jobs:
           
           Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value $summary
 
-      # Step 10: Check test outcome and fail if needed
+      # Step 11: Check test outcome and fail if needed
       - name: ✅ Verify Test Results
         shell: pwsh
         run: |
