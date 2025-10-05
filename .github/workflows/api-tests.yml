@@ -35,26 +35,26 @@ jobs:
 
       # Step 4: Restore dependencies
       - name: 📦 Restore Dependencies
+        run: dotnet restore RestfulApiDevTests.csproj
         working-directory: RestfulApiDevTests
-        run: dotnet restore
 
       # Step 5: Build the project
       - name: 🏗️ Build Project
+        run: dotnet build RestfulApiDevTests.csproj --configuration Release --no-restore
         working-directory: RestfulApiDevTests
-        run: dotnet build --configuration Release --no-restore
 
       # Step 6: Run the tests
       - name: 🧪 Run API Tests
-        working-directory: RestfulApiDevTests
         shell: pwsh
         run: |
-          dotnet test `
+          dotnet test RestfulApiDevTests.csproj `
             --configuration Release `
             --no-build `
             --verbosity normal `
             --logger "trx;LogFileName=test-results.trx" `
             --logger "html;LogFileName=test-results.html" `
-            --results-directory ..\TestResults
+            --results-directory ${{ github.workspace }}\TestResults
+        working-directory: RestfulApiDevTests
         continue-on-error: true  # Continue to upload results even if tests fail
 
       # Step 7: Publish test results
@@ -94,7 +94,7 @@ jobs:
           
           "@
           
-          if (Test-Path "TestResults\test-results.trx") {
+          if (Test-Path "${{ github.workspace }}\TestResults\test-results.trx") {
             $summary += "`n✅ Test results generated successfully`n"
             $summary += "`n📊 Test results are available in the artifacts section`n"
           } else {
@@ -107,8 +107,9 @@ jobs:
       - name: ✅ Verify Test Results
         shell: pwsh
         run: |
-          if (Test-Path "TestResults\test-results.trx") {
-            $content = Get-Content "TestResults\test-results.trx" -Raw
+          $trxPath = "${{ github.workspace }}\TestResults\test-results.trx"
+          if (Test-Path $trxPath) {
+            $content = Get-Content $trxPath -Raw
             if ($content -match 'outcome="Failed"') {
               Write-Host "❌ Some tests failed!"
               exit 1
