@@ -1,0 +1,132 @@
+name: API Tests CI Pipeline
+
+# Trigger the workflow on push or pull request
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+  workflow_dispatch:  # Allows manual triggering from GitHub UI
+
+env:
+  DOTNET_VERSION: '8.0.x'
+  TEST_PROJECT_PATH: 'RestfulApiDevTests/RestfulApiDevTests.csproj'
+
+jobs:
+  test:
+    name: Run API Tests
+    runs-on: Windows-latest
+    
+    steps:
+      # Step 1: Checkout the repository
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Fetch all history for better analysis
+
+      # Step 2: Setup .NET SDK
+      - name: 🔧 Setup .NET ${{ env.DOTNET_VERSION }}
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      # Step 3: Display .NET version
+      - name: 📋 Display .NET version
+        run: dotnet --version
+
+      # Step 4: Restore dependencies
+      - name: 📦 Restore Dependencies
+        run: dotnet restore ${{ env.TEST_PROJECT_PATH }}
+
+      # Step 5: Build the project
+      - name: 🏗️ Build Project
+        run: dotnet build ${{ env.TEST_PROJECT_PATH }} --configuration Release --no-restore
+
+      # Step 6: Run the tests
+      - name: 🧪 Run API Tests
+        run: |
+          dotnet test ${{ env.TEST_PROJECT_PATH }} \
+            --configuration Release \
+            --no-build \
+            --verbosity normal \
+            --logger "trx;LogFileName=test-results.trx" \
+            --logger "html;LogFileName=test-results.html" \
+            --results-directory ./TestResults
+        continue-on-error: true  # Continue to upload results even if tests fail
+
+      # Step 7: Publish test results
+      - name: 📊 Publish Test Results
+        uses: EnricoMi/publish-unit-test-result-action@v2
+        if: always()  # Run even if previous steps fail
+        with:
+          files: |
+            TestResults/**/*.trx
+          check_name: 'API Test Results'
+          comment_title: '🧪 API Test Results'
+          fail_on: 'nothing'  # Don't fail the workflow, just report
+
+      # Step 8: Upload test results as artifacts
+      - name: 📤 Upload Test Results Artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-results
+          path: TestResults/
+          retention-days: 30
+
+      # Step 9: Generate test summary
+      - name: 📝 Generate Test Summary
+        if: always()
+        run: |
+          echo "# 🧪 API Test Execution Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## Test Configuration" >> $GITHUB_STEP_SUMMARY
+          echo "- **API Under Test**: restful-api.dev" >> $GITHUB_STEP_SUMMARY
+          echo "- **Endpoint Tested**: PATCH /objects/{id}" >> $GITHUB_STEP_SUMMARY
+          echo "- **.NET Version**: ${{ env.DOTNET_VERSION }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Run Date**: $(date +'%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_STEP_SUMMARY
+          echo "- **Commit**: ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          if [ -f "TestResults/test-results.trx" ]; then
+            echo "✅ Test results generated successfully" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "📊 Test results are available in the artifacts section" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "⚠️ Test results file not found" >> $GITHUB_STEP_SUMMARY
+          fi
+
+      # Step 10: Check test outcome and fail if needed
+      - name: ✅ Verify Test Results
+        run: |
+          if [ -f "TestResults/test-results.trx" ]; then
+            # Check if any tests failed
+            if grep -q "outcome=\"Failed\"" TestResults/test-results.trx; then
+              echo "❌ Some tests failed!"
+              exit 1
+            else
+              echo "✅ All tests passed!"
+            fi
+          else
+            echo "⚠️ Could not verify test results"
+            exit 1
+          fi
+
+  # Job for reporting status
+  report-status:
+    name: Report Status
+    runs-on: windows-latest
+    needs: test
+    if: always()
+    
+    steps:
+      - name: 📢 Report Success
+        if: needs.test.result == 'success'
+        run: |
+          echo "::notice::✅ All API tests passed successfully!"
+          
+      - name: 📢 Report Failure
+        if: needs.test.result == 'failure'
+        run: |
+          echo "::error::❌ Some API tests failed. Please check the test results."
+          exit 1
