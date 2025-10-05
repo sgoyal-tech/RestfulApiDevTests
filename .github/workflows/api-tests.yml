@@ -3,13 +3,14 @@ name: API Tests CI Pipeline
 # Trigger the workflow on push or pull request
 on:
   push:
-    branches: [ master ]
+    branches: [ main, develop ]
   pull_request:
-    branches: [ master ]
+    branches: [ main ]
   workflow_dispatch:  # Allows manual triggering from GitHub UI
 
 env:
   DOTNET_VERSION: '8.0.x'
+  PROJECT_PATH: 'RestfulApiDevTests/RestfulApiDevTests.csproj'
 
 jobs:
   test:
@@ -35,26 +36,23 @@ jobs:
 
       # Step 4: Restore dependencies
       - name: 📦 Restore Dependencies
-        run: dotnet restore RestfulApiDevTests.csproj
-        working-directory: RestfulApiDevTests
+        run: dotnet restore "${{ env.PROJECT_PATH }}"
 
       # Step 5: Build the project
       - name: 🏗️ Build Project
-        run: dotnet build RestfulApiDevTests.csproj --configuration Release --no-restore
-        working-directory: RestfulApiDevTests
+        run: dotnet build "${{ env.PROJECT_PATH }}" --configuration Release --no-restore
 
       # Step 6: Run the tests
       - name: 🧪 Run API Tests
         shell: pwsh
         run: |
-          dotnet test RestfulApiDevTests.csproj `
+          dotnet test "${{ env.PROJECT_PATH }}" `
             --configuration Release `
             --no-build `
             --verbosity normal `
             --logger "trx;LogFileName=test-results.trx" `
             --logger "html;LogFileName=test-results.html" `
-            --results-directory ${{ github.workspace }}\TestResults
-        working-directory: RestfulApiDevTests
+            --results-directory TestResults
         continue-on-error: true  # Continue to upload results even if tests fail
 
       # Step 7: Publish test results
@@ -94,7 +92,7 @@ jobs:
           
           "@
           
-          if (Test-Path "${{ github.workspace }}\TestResults\test-results.trx") {
+          if (Test-Path "TestResults\test-results.trx") {
             $summary += "`n✅ Test results generated successfully`n"
             $summary += "`n📊 Test results are available in the artifacts section`n"
           } else {
@@ -107,9 +105,8 @@ jobs:
       - name: ✅ Verify Test Results
         shell: pwsh
         run: |
-          $trxPath = "${{ github.workspace }}\TestResults\test-results.trx"
-          if (Test-Path $trxPath) {
-            $content = Get-Content $trxPath -Raw
+          if (Test-Path "TestResults\test-results.trx") {
+            $content = Get-Content "TestResults\test-results.trx" -Raw
             if ($content -match 'outcome="Failed"') {
               Write-Host "❌ Some tests failed!"
               exit 1
