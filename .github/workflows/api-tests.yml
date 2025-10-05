@@ -3,9 +3,9 @@ name: API Tests CI Pipeline
 # Trigger the workflow on push or pull request
 on:
   push:
-    branches: [ main, develop ]
+    branches: [ master ]
   pull_request:
-    branches: [ main ]
+    branches: [ master ]
   workflow_dispatch:  # Allows manual triggering from GitHub UI
 
 env:
