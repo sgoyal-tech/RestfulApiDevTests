@@ -16,7 +16,7 @@ jobs:
   test:
     name: Run API Tests
     runs-on: windows-latest
-    C:\Users\Shashank Goyal\source\repos\RestfulApiDevTests
+   
     steps:
       # Step 1: Checkout the repository
       - name: 📥 Checkout Repository
