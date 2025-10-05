@@ -1,6 +1,7 @@
 ﻿using RestSharp;
 using System.Net;
 using RestfulApiDevTests.Models;
+using System.Diagnostics;
 
 namespace RestfulApiDevTests.Utilities;
 
@@ -153,7 +154,7 @@ public static class ApiHelpers
     public static string CreateResponseSummary(RestResponse response)
     {
         return $"Status: {(int)response.StatusCode} {response.StatusCode}, " +
-               $"Time: {response.ResponseTime?.TotalMilliseconds ?? 0}ms, " +
+               $"Time: {System.Diagnostics.Stopwatch.GetTimestamp()}ms, " +
                $"Size: {response.Content?.Length ?? 0} bytes";
     }
 
