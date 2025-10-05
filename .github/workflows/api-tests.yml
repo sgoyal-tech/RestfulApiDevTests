@@ -3,20 +3,19 @@ name: API Tests CI Pipeline
 # Trigger the workflow on push or pull request
 on:
   push:
-    branches: [ master ]
+    branches: [ main, develop ]
   pull_request:
-    branches: [ master ]
+    branches: [ main ]
   workflow_dispatch:  # Allows manual triggering from GitHub UI
 
 env:
-  DOTNET_VERSION: '9.0.x'
-  TEST_PROJECT_PATH: "C:/Users/Shashank Goyal/source/repos/RestfulApiDevTests/RestfulApiDevTests.csproj"
+  DOTNET_VERSION: '8.0.x'
 
 jobs:
   test:
     name: Run API Tests
     runs-on: windows-latest
-   
+    
     steps:
       # Step 1: Checkout the repository
       - name: 📥 Checkout Repository
@@ -36,34 +35,37 @@ jobs:
 
       # Step 4: Restore dependencies
       - name: 📦 Restore Dependencies
-        run: dotnet restore ${{ env.TEST_PROJECT_PATH }}
+        working-directory: RestfulApiDevTests
+        run: dotnet restore
 
       # Step 5: Build the project
       - name: 🏗️ Build Project
-        run: dotnet build ${{ env.TEST_PROJECT_PATH }} --configuration Release --no-restore
+        working-directory: RestfulApiDevTests
+        run: dotnet build --configuration Release --no-restore
 
       # Step 6: Run the tests
       - name: 🧪 Run API Tests
+        working-directory: RestfulApiDevTests
+        shell: pwsh
         run: |
-          dotnet test ${{ env.TEST_PROJECT_PATH }} \
-            --configuration Release \
-            --no-build \
-            --verbosity normal \
-            --logger "trx;LogFileName=test-results.trx" \
-            --logger "html;LogFileName=test-results.html" \
-            --results-directory ./TestResults
+          dotnet test `
+            --configuration Release `
+            --no-build `
+            --verbosity normal `
+            --logger "trx;LogFileName=test-results.trx" `
+            --logger "html;LogFileName=test-results.html" `
+            --results-directory ..\TestResults
         continue-on-error: true  # Continue to upload results even if tests fail
 
       # Step 7: Publish test results
       - name: 📊 Publish Test Results
-        uses: EnricoMi/publish-unit-test-result-action@v2
+        uses: EnricoMi/publish-unit-test-result-action/composite@v2
         if: always()  # Run even if previous steps fail
         with:
           files: |
             TestResults/**/*.trx
           check_name: 'API Test Results'
           comment_title: '🧪 API Test Results'
-          fail_on: 'nothing'  # Don't fail the workflow, just report
 
       # Step 8: Upload test results as artifacts
       - name: 📤 Upload Test Results Artifact
@@ -77,40 +79,46 @@ jobs:
       # Step 9: Generate test summary
       - name: 📝 Generate Test Summary
         if: always()
+        shell: pwsh
         run: |
-          echo "# 🧪 API Test Execution Summary" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "## Test Configuration" >> $GITHUB_STEP_SUMMARY
-          echo "- **API Under Test**: restful-api.dev" >> $GITHUB_STEP_SUMMARY
-          echo "- **Endpoint Tested**: PATCH /objects/{id}" >> $GITHUB_STEP_SUMMARY
-          echo "- **.NET Version**: ${{ env.DOTNET_VERSION }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Run Date**: $(date +'%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_STEP_SUMMARY
-          echo "- **Commit**: ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
+          $summary = @"
+          # 🧪 API Test Execution Summary
           
-          if [ -f "TestResults/test-results.trx" ]; then
-            echo "✅ Test results generated successfully" >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "📊 Test results are available in the artifacts section" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "⚠️ Test results file not found" >> $GITHUB_STEP_SUMMARY
-          fi
+          ## Test Configuration
+          - **API Under Test**: restful-api.dev
+          - **Endpoint Tested**: PATCH /objects/{id}
+          - **.NET Version**: ${{ env.DOTNET_VERSION }}
+          - **OS**: Windows
+          - **Run Date**: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss UTC')
+          - **Commit**: ${{ github.sha }}
+          
+          "@
+          
+          if (Test-Path "TestResults\test-results.trx") {
+            $summary += "`n✅ Test results generated successfully`n"
+            $summary += "`n📊 Test results are available in the artifacts section`n"
+          } else {
+            $summary += "`n⚠️ Test results file not found`n"
+          }
+          
+          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value $summary
 
       # Step 10: Check test outcome and fail if needed
       - name: ✅ Verify Test Results
+        shell: pwsh
         run: |
-          if [ -f "TestResults/test-results.trx" ]; then
-            # Check if any tests failed
-            if grep -q "outcome=\"Failed\"" TestResults/test-results.trx; then
-              echo "❌ Some tests failed!"
+          if (Test-Path "TestResults\test-results.trx") {
+            $content = Get-Content "TestResults\test-results.trx" -Raw
+            if ($content -match 'outcome="Failed"') {
+              Write-Host "❌ Some tests failed!"
               exit 1
-            else
-              echo "✅ All tests passed!"
-            fi
-          else
-            echo "⚠️ Could not verify test results"
+            } else {
+              Write-Host "✅ All tests passed!"
+            }
+          } else {
+            Write-Host "⚠️ Could not verify test results"
             exit 1
-          fi
+          }
 
   # Job for reporting status
   report-status:
