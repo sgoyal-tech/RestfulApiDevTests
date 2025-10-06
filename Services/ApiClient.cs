@@ -1,105 +1,318 @@
-﻿using RestSharp;
+﻿using System.Net;
+using System.Net.Http.Json;
 using System.Text.Json;
 using RestfulApiDevTests.Models;
 
 namespace RestfulApiDevTests.Services;
 
 /// <summary>
-/// Client for interacting with the restful-api.dev API
+/// Improved API client with comprehensive error handling and retry logic
 /// </summary>
 public class ApiClient : IDisposable
 {
-    private readonly RestClient _client;
-    private readonly string _baseUrl = "https://api.restful-api.dev";
+    private readonly HttpClient _httpClient;
+    private readonly int _maxRetries;
+    private readonly int _retryDelayMs;
+    private readonly ILogger? _logger;
 
-    public ApiClient()
+    public ApiClient(
+        HttpClient httpClient,
+        int maxRetries = 3,
+        int retryDelayMs = 1000,
+        ILogger? logger = null)
     {
-        var options = new RestClientOptions(_baseUrl)
+        _httpClient = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
+        _maxRetries = maxRetries;
+        _retryDelayMs = retryDelayMs;
+        _logger = logger;
+    }
+
+    /// <summary>
+    /// PATCH request with comprehensive error handling
+    /// </summary>
+    public async Task<ApiResponse<ApiObject>> PatchObjectAsync(string id, object updateData)
+    {
+        if (string.IsNullOrWhiteSpace(id))
         {
-            ThrowOnAnyError = false,
-            MaxTimeout = 30000 // 30 seconds
-        };
-        _client = new RestClient(options);
+            throw new ArgumentException("Object ID cannot be null or empty", nameof(id));
+        }
+
+        if (updateData == null)
+        {
+            throw new ArgumentNullException(nameof(updateData));
+        }
+
+        return await ExecuteWithRetryAsync(async () =>
+        {
+            try
+            {
+                _logger?.LogInfo($"PATCH /objects/{id}");
+                _logger?.LogDebug($"Payload: {JsonSerializer.Serialize(updateData)}");
+
+                var startTime = DateTime.UtcNow;
+                var response = await _httpClient.PatchAsync(
+                    $"/objects/{id}",
+                    JsonContent.Create(updateData)
+                );
+                var duration = (DateTime.UtcNow - startTime).TotalMilliseconds;
+
+                _logger?.LogInfo($"Response: {(int)response.StatusCode} {response.StatusCode} ({duration}ms)");
+
+                var data = response.IsSuccessStatusCode
+                    ? await SafeDeserializeAsync<ApiObject>(response)
+                    : null;
+
+                return new ApiResponse<ApiObject>(
+                    response.StatusCode,
+                    data,
+                    response.Content.Headers.ContentType?.MediaType,
+                    response.IsSuccessStatusCode,
+                    (long)duration
+                );
+            }
+            catch (HttpRequestException ex)
+            {
+                _logger?.LogError($"HTTP request failed: {ex.Message}", ex);
+                throw new ApiException("HTTP request failed", ex);
+            }
+            catch (TaskCanceledException ex)
+            {
+                _logger?.LogError($"Request timeout: {ex.Message}", ex);
+                throw new ApiException("Request timed out", ex);
+            }
+            catch (JsonException ex)
+            {
+                _logger?.LogError($"JSON deserialization failed: {ex.Message}", ex);
+                throw new ApiException("Failed to parse API response", ex);
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogError($"Unexpected error: {ex.Message}", ex);
+                throw new ApiException("Unexpected error occurred", ex);
+            }
+        });
     }
 
     /// <summary>
-    /// Get an object by ID
+    /// PATCH request with raw JSON string
     /// </summary>
-    public async Task<RestResponse<ApiObject>> GetObjectAsync(string objectId)
+    public async Task<ApiResponse<ApiObject>> PatchObjectRawAsync(string id, string rawJson)
     {
-        var request = new RestRequest($"/objects/{objectId}", Method.Get);
-        return await _client.ExecuteAsync<ApiObject>(request);
+        if (string.IsNullOrWhiteSpace(id))
+        {
+            throw new ArgumentException("Object ID cannot be null or empty", nameof(id));
+        }
+
+        if (rawJson == null)
+        {
+            throw new ArgumentNullException(nameof(rawJson));
+        }
+
+        return await ExecuteWithRetryAsync(async () =>
+        {
+            try
+            {
+                _logger?.LogInfo($"PATCH /objects/{id} (raw)");
+                _logger?.LogDebug($"Raw JSON: {rawJson}");
+
+                var content = new StringContent(
+                    rawJson,
+                    System.Text.Encoding.UTF8,
+                    "application/json"
+                );
+
+                var startTime = DateTime.UtcNow;
+                var response = await _httpClient.PatchAsync($"/objects/{id}", content);
+                var duration = (DateTime.UtcNow - startTime).TotalMilliseconds;
+
+                _logger?.LogInfo($"Response: {(int)response.StatusCode} {response.StatusCode} ({duration}ms)");
+
+                var data = response.IsSuccessStatusCode
+                    ? await SafeDeserializeAsync<ApiObject>(response)
+                    : null;
+
+                return new ApiResponse<ApiObject>(
+                    response.StatusCode,
+                    data,
+                    response.Content.Headers.ContentType?.MediaType,
+                    response.IsSuccessStatusCode,
+                    (long)duration
+                );
+            }
+            catch (HttpRequestException ex)
+            {
+                _logger?.LogError($"HTTP request failed: {ex.Message}", ex);
+                throw new ApiException("HTTP request failed", ex);
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogError($"Unexpected error: {ex.Message}", ex);
+                throw new ApiException("Unexpected error occurred", ex);
+            }
+        });
     }
 
     /// <summary>
-    /// Create a new object
+    /// GET request with error handling
     /// </summary>
-    public async Task<RestResponse<ApiObject>> CreateObjectAsync(ApiObjectUpdate data)
+    public async Task<ApiResponse<ApiObject>> GetObjectAsync(string id)
     {
-        var request = new RestRequest("/objects", Method.Post);
-        request.AddJsonBody(data);
-        return await _client.ExecuteAsync<ApiObject>(request);
+        if (string.IsNullOrWhiteSpace(id))
+        {
+            throw new ArgumentException("Object ID cannot be null or empty", nameof(id));
+        }
+
+        return await ExecuteWithRetryAsync(async () =>
+        {
+            try
+            {
+                _logger?.LogInfo($"GET /objects/{id}");
+
+                var startTime = DateTime.UtcNow;
+                var response = await _httpClient.GetAsync($"/objects/{id}");
+                var duration = (DateTime.UtcNow - startTime).TotalMilliseconds;
+
+                _logger?.LogInfo($"Response: {(int)response.StatusCode} {response.StatusCode} ({duration}ms)");
+
+                var data = response.IsSuccessStatusCode
+                    ? await SafeDeserializeAsync<ApiObject>(response)
+                    : null;
+
+                return new ApiResponse<ApiObject>(
+                    response.StatusCode,
+                    data,
+                    response.Content.Headers.ContentType?.MediaType,
+                    response.IsSuccessStatusCode,
+                    (long)duration
+                );
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogError($"GET request failed: {ex.Message}", ex);
+                throw new ApiException("Failed to retrieve object", ex);
+            }
+        });
     }
 
     /// <summary>
-    /// Partially update an object using PATCH
+    /// Safe JSON deserialization with error handling
     /// </summary>
-    public async Task<RestResponse<ApiObject>> PatchObjectAsync(string objectId, object updateData)
+    private async Task<T?> SafeDeserializeAsync<T>(HttpResponseMessage response)
     {
-        var request = new RestRequest($"/objects/{objectId}", Method.Patch);
-        request.AddJsonBody(updateData);
-        return await _client.ExecuteAsync<ApiObject>(request);
-    }
-
-    /// <summary>
-    /// Fully update an object using PUT
-    /// </summary>
-    public async Task<RestResponse<ApiObject>> PutObjectAsync(string objectId, ApiObjectUpdate data)
-    {
-        var request = new RestRequest($"/objects/{objectId}", Method.Put);
-        request.AddJsonBody(data);
-        return await _client.ExecuteAsync<ApiObject>(request);
-    }
-
-    /// <summary>
-    /// Delete an object
-    /// </summary>
-    public async Task<RestResponse> DeleteObjectAsync(string objectId)
-    {
-        var request = new RestRequest($"/objects/{objectId}", Method.Delete);
-        return await _client.ExecuteAsync(request);
-    }
-
-    /// <summary>
-    /// Send a raw PATCH request with custom body
-    /// </summary>
-    public async Task<RestResponse> PatchObjectRawAsync(string objectId, string jsonBody)
-    {
-        var request = new RestRequest($"/objects/{objectId}", Method.Patch);
-        request.AddStringBody(jsonBody, ContentType.Json);
-        return await _client.ExecuteAsync(request);
-    }
-
-    /// <summary>
-    /// Get error information from response
-    /// </summary>
-    public ApiError? GetErrorFromResponse(RestResponse response)
-    {
-        if (string.IsNullOrEmpty(response.Content))
-            return null;
-
         try
         {
-            return JsonSerializer.Deserialize<ApiError>(response.Content);
+            var content = await response.Content.ReadAsStringAsync();
+
+            if (string.IsNullOrWhiteSpace(content))
+            {
+                _logger?.LogWarning("Response content is empty");
+                return default;
+            }
+
+            return JsonSerializer.Deserialize<T>(content, new JsonSerializerOptions
+            {
+                PropertyNameCaseInsensitive = true,
+                PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+            });
         }
-        catch
+        catch (JsonException ex)
         {
-            return new ApiError { Error = "Unknown", Message = response.Content };
+            _logger?.LogError($"JSON deserialization failed: {ex.Message}", ex);
+            return default;
         }
+    }
+
+    /// <summary>
+    /// Execute operation with retry logic
+    /// </summary>
+    private async Task<T> ExecuteWithRetryAsync<T>(Func<Task<T>> operation)
+    {
+        int attempt = 0;
+        Exception? lastException = null;
+
+        while (attempt < _maxRetries)
+        {
+            try
+            {
+                return await operation();
+            }
+            catch (ApiException ex) when (IsRetryableError(ex) && attempt < _maxRetries - 1)
+            {
+                attempt++;
+                lastException = ex;
+
+                _logger?.LogWarning($"Retry attempt {attempt}/{_maxRetries} after error: {ex.Message}");
+
+                await Task.Delay(_retryDelayMs * attempt); // Exponential backoff
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogError($"Non-retryable error: {ex.Message}", ex);
+                throw;
+            }
+        }
+
+        throw new ApiException($"Operation failed after {_maxRetries} attempts", lastException!);
+    }
+
+    /// <summary>
+    /// Determine if an error is retryable
+    /// </summary>
+    private bool IsRetryableError(Exception ex)
+    {
+        return ex.InnerException is HttpRequestException ||
+               ex.InnerException is TaskCanceledException ||
+               ex.Message.Contains("timeout", StringComparison.OrdinalIgnoreCase);
     }
 
     public void Dispose()
     {
-        _client?.Dispose();
+        _httpClient?.Dispose();
     }
+}
+
+/// <summary>
+/// API response with extended information
+/// </summary>
+public class ApiResponse<T>
+{
+    public HttpStatusCode StatusCode { get; }
+    public T? Data { get; }
+    public string? ContentType { get; }
+    public bool IsSuccessful { get; }
+    public long DurationMs { get; }
+
+    public ApiResponse(
+        HttpStatusCode statusCode,
+        T? data,
+        string? contentType,
+        bool isSuccessful,
+        long durationMs = 0)
+    {
+        StatusCode = statusCode;
+        Data = data;
+        ContentType = contentType;
+        IsSuccessful = isSuccessful;
+        DurationMs = durationMs;
+    }
+}
+
+/// <summary>
+/// Custom API exception
+/// </summary>
+public class ApiException : Exception
+{
+    public ApiException(string message) : base(message) { }
+    public ApiException(string message, Exception innerException) : base(message, innerException) { }
+}
+
+/// <summary>
+/// Simple logger interface
+/// </summary>
+public interface ILogger
+{
+    void LogInfo(string message);
+    void LogError(string message, Exception? exception = null);
+    void LogWarning(string message);
+    void LogDebug(string message);
 }

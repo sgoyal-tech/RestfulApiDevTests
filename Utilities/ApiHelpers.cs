@@ -97,7 +97,7 @@ public static class ApiHelpers
             {
                 return await operation();
             }
-            catch (Exception ex)
+            catch (Exception)
             {
                 retryCount++;
                 if (retryCount >= maxRetries)
