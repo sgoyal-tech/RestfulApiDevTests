@@ -95,7 +95,7 @@ jobs:
         continue-on-error: true
 
       - name: 📈 Publish Test Results
-        uses: EnricoMi/publish-unit-test-result-action/bash@2
+        uses: EnricoMi/publish-unit-test-result-action/windows/bash@v2
         if: runner.os == 'Windows'
         with:
           files: |
