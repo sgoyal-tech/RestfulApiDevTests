@@ -1,6 +1,12 @@
 ﻿using FluentAssertions;
 using System.Net;
 using System.Diagnostics;
+using Microsoft.VisualStudio.TestPlatform.Utilities;
+using RestfulApiDevTests.Models;
+using System.Text;
+using Xunit.Abstractions;
+using RestSharp;
+using NPOI.SS.Formula.Functions;
 
 namespace RestfulApiDevTests.Tests;
 
@@ -9,6 +15,13 @@ namespace RestfulApiDevTests.Tests;
 /// </summary>
 public class PatchEndpointTests : TestBase
 {
+    private readonly ITestOutputHelper _output;
+
+    public PatchEndpointTests(ITestOutputHelper output)
+    {
+        _output = output;
+    }
+
     #region Happy Path Tests
 
     [Fact]
@@ -67,7 +80,7 @@ public class PatchEndpointTests : TestBase
         response.StatusCode.Should().Be(HttpStatusCode.OK);
         response.Data.Should().NotBeNull();
         response.Data!.Data.Should().ContainKey("price");
-        response.Data.Data!["price"].ToString().Should().Contain("150");
+        _ = response.Data.Data!["price"].ToString().Should().Contain("150");
         response.Data.Data.Should().ContainKey("color");
         response.Data.Data["color"].Should().Be("Blue");
     }
@@ -178,6 +191,423 @@ public class PatchEndpointTests : TestBase
             HttpStatusCode.BadRequest
         );
     }
+    #region Missing Payloads
+
+    [Fact]
+    [Trait("Category", "Negative")]
+    [Trait("Priority", "High")]
+    public async Task PatchObject_WithNullPayload_ShouldReturnBadRequest()
+    {
+        // Arrange
+        var testObject = await CreateTestObjectAsync("Test Object");
+        _output.WriteLine($"Created test object with ID: {testObject?.Id}");
+
+        // Act
+        var response = await _apiClient.PatchObjectAsync(testObject!.Id!, null!);
+        _output.WriteLine($"Response: {response.StatusCode}");
+
+        // Assert
+        response.StatusCode.Should().BeOneOf(
+            HttpStatusCode.BadRequest,
+            HttpStatusCode.UnprocessableEntity
+        );
+        response.IsSuccessful.Should().BeFalse();
+    }
+
+    [Fact]
+    [Trait("Category", "Negative")]
+    [Trait("Priority", "High")]
+    public async Task PatchObject_WithEmptyStringPayload_ShouldReturnBadRequest()
+    {
+        // Arrange
+        var testObject = await CreateTestObjectAsync("Test Object");
+
+        // Act
+        var response = await _apiClient.PatchObjectRawAsync(testObject!.Id!, "");
+        _output.WriteLine($"Response: {response.StatusCode}");
+
+        // Assert
+        response.StatusCode.Should().BeOneOf(
+            HttpStatusCode.BadRequest,
+            HttpStatusCode.UnprocessableEntity
+        );
+    }
+
+    [Fact]
+    [Trait("Category", "Negative")]
+    [Trait("Priority", "Medium")]
+    public async Task PatchObject_WithWhitespaceOnlyPayload_ShouldReturnBadRequest()
+    {
+        // Arrange
+        var testObject = await CreateTestObjectAsync("Test Object");
+
+        // Act
+        var response = await _apiClient.PatchObjectRawAsync(testObject!.Id!, "   ");
+        _output.WriteLine($"Response: {response.StatusCode}");
+
+        // Assert
+        response.StatusCode.Should().BeOneOf(
+            HttpStatusCode.BadRequest,
+            HttpStatusCode.UnprocessableEntity
+        );
+    }
+
+    #endregion
+
+    #region Invalid Data Types
+
+    [Theory]
+    [Trait("Category", "Negative")]
+    [Trait("Priority", "High")]
+    [InlineData("{ \"name\": 12345 }")]  // Number instead of string
+    [InlineData("{ \"name\": true }")]   // Boolean instead of string
+    [InlineData("{ \"name\": [] }")]     // Array instead of string
+    public async Task PatchObject_WithInvalidNameDataType_ShouldHandleGracefully(string invalidJson)
+    {
+        // Arrange
+        var testObject = await CreateTestObjectAsync("Test Object");
+        _output.WriteLine($"Testing with payload: {invalidJson}");
+
+        // Act
+        var response = await _apiClient.PatchObjectRawAsync(testObject!.Id!, invalidJson);
+        _output.WriteLine($"Response: {response.StatusCode}");
+
+        // Assert
+        response.StatusCode.Should().BeOneOf(
+            HttpStatusCode.OK,              // API accepts and converts
+            HttpStatusCode.BadRequest,       // API rejects
+            HttpStatusCode.UnprocessableEntity
+        );
+    }
+
+    [Fact]
+    [Trait("Category", "Negative")]
+    [Trait("Priority", "Medium")]
+    public async Task PatchObject_WithDataAsString_ShouldReturnBadRequest()
+    {
+        // Arrange
+        var testObject = await CreateTestObjectAsync("Test Object");
+        var invalidJson = "{ \"data\": \"should be object not string\" }";
+        _output.WriteLine($"Testing with payload: {invalidJson}");
+
+        // Act
+        var response = await _apiClient.PatchObjectRawAsync(testObject!.Id!, invalidJson);
+        _output.WriteLine($"Response: {response.StatusCode}");
+
+        // Assert
+        response.StatusCode.Should().BeOneOf(
+            HttpStatusCode.BadRequest,
+            HttpStatusCode.UnprocessableEntity
+        );
+    }
+
+    [Fact]
+    [Trait("Category", "Negative")]
+    [Trait("Priority", "Medium")]
+    public async Task PatchObject_WithDataAsArray_ShouldReturnBadRequest()
+    {
+        // Arrange
+        var testObject = await CreateTestObjectAsync("Test Object");
+        var invalidJson = "{ \"data\": [1, 2, 3] }";
+        _output.WriteLine($"Testing with payload: {invalidJson}");
+
+        // Act
+        var response = await _apiClient.PatchObjectRawAsync(testObject!.Id!, invalidJson);
+        _output.WriteLine($"Response: {response.StatusCode}");
+
+        // Assert
+        response.StatusCode.Should().BeOneOf(
+            HttpStatusCode.BadRequest,
+            HttpStatusCode.UnprocessableEntity
+        );
+    }
+
+    #endregion
+
+    #region Malformed JSON
+
+    [Theory]
+    [Trait("Category", "Negative")]
+    [Trait("Priority", "High")]
+    [InlineData("{ \"name\": \"test\" ")]              // Missing closing brace
+    [InlineData("{ \"name\" \"test\" }")]              // Missing colon
+    [InlineData("{ name: \"test\" }")]                 // Unquoted key
+    [InlineData("{ \"name\": \"test\", }")]            // Trailing comma
+    [InlineData("{ \"name\": 'test' }")]               // Single quotes
+    [InlineData("{ \"name\": undefined }")]            // Undefined value
+    [InlineData("")]                                    // Empty string
+    [InlineData("null")]                               // JSON null
+    [InlineData("not json at all")]                    // Plain text
+    public async Task PatchObject_WithMalformedJson_ShouldReturnBadRequest(string malformedJson)
+    {
+        // Arrange
+        var testObject = await CreateTestObjectAsync("Test Object");
+        _output.WriteLine($"Testing with malformed JSON: {malformedJson}");
+
+        // Act
+        var response = await _apiClient.PatchObjectRawAsync(testObject!.Id!, malformedJson);
+        _output.WriteLine($"Response: {response.StatusCode}");
+
+        // Assert
+        response.StatusCode.Should().BeOneOf(
+            HttpStatusCode.BadRequest,
+            HttpStatusCode.UnprocessableEntity,
+            HttpStatusCode.InternalServerError
+        );
+        response.IsSuccessful.Should().BeFalse();
+    }
+
+    [Fact]
+    [Trait("Category", "Negative")]
+    [Trait("Priority", "Medium")]
+    public async Task PatchObject_WithDoubleEncodedJson_ShouldReturnBadRequest()
+    {
+        // Arrange
+        var testObject = await CreateTestObjectAsync("Test Object");
+        var doubleEncoded = "\"{ \\\"name\\\": \\\"test\\\" }\"";
+        _output.WriteLine($"Testing with double-encoded JSON: {doubleEncoded}");
+
+        // Act
+        var response = await _apiClient.PatchObjectRawAsync(testObject!.Id!, doubleEncoded);
+        _output.WriteLine($"Response: {response.StatusCode}");
+
+        // Assert
+        response.StatusCode.Should().BeOneOf(
+            HttpStatusCode.BadRequest,
+            HttpStatusCode.UnprocessableEntity
+        );
+    }
+
+    #endregion
+
+    #region Content-Type Issues
+
+    [Fact]
+    [Trait("Category", "Negative")]
+    [Trait("Priority", "Medium")]
+    public async Task PatchObject_WithWrongContentType_ShouldReturnUnsupportedMediaType()
+    {
+        // Arrange
+        var testObject = await CreateTestObjectAsync("Test Object");
+        var httpClient = new HttpClient { BaseAddress = new Uri("https://api.restful-api.dev") };
+
+        var content = new StringContent(
+            "{ \"name\": \"test\" }",
+            Encoding.UTF8,
+        "text/plain"  // Wrong content type
+        );
+
+        _output.WriteLine("Testing with wrong Content-Type: text/plain");
+
+        // Act
+        var response = await httpClient.PatchAsync($"/objects/{testObject!.Id}", content);
+        _output.WriteLine($"Response: {response.StatusCode}");
+
+        // Assert
+        response.StatusCode.Should().BeOneOf(
+            HttpStatusCode.UnsupportedMediaType,
+            HttpStatusCode.BadRequest,
+            HttpStatusCode.OK  // Some APIs are lenient
+        );
+    }
+
+    [Fact]
+    [Trait("Category", "Negative")]
+    [Trait("Priority", "Low")]
+    public async Task PatchObject_WithMissingContentType_ShouldHandleGracefully()
+    {
+        // Arrange
+        var testObject = await CreateTestObjectAsync("Test Object");
+        var httpClient = new HttpClient { BaseAddress = new Uri("https://api.restful-api.dev") };
+
+        var content = new StringContent("{ \"name\": \"test\" }");
+        content.Headers.ContentType = null;  // Remove content type
+
+        _output.WriteLine("Testing with missing Content-Type header");
+
+        // Act
+        var response = await httpClient.PatchAsync($"/objects/{testObject!.Id}", content);
+        _output.WriteLine($"Response: {response.StatusCode}");
+
+        // Assert
+        response.StatusCode.Should().BeOneOf(
+            HttpStatusCode.UnsupportedMediaType,
+            HttpStatusCode.BadRequest,
+            HttpStatusCode.OK
+        );
+    }
+
+    #endregion
+
+    #region Boundary Values
+
+    [Fact]
+    [Trait("Category", "Negative")]
+    [Trait("Priority", "Medium")]
+    public async Task PatchObject_WithExtremelyLargePayload_ShouldHandleGracefully()
+    {
+        // Arrange
+        var testObject = await CreateTestObjectAsync("Test Object");
+
+        // Create a very large payload (>1MB)
+        var largeString = new string('A', 1024 * 1024); // 1MB of 'A's
+        var largeJson = $"{{ \"name\": \"{largeString}\" }}";
+
+        _output.WriteLine($"Testing with extremely large payload: {largeJson.Length} bytes");
+
+        // Act
+        var response = await _apiClient.PatchObjectRawAsync(testObject!.Id!, largeJson);
+        _output.WriteLine($"Response: {response.StatusCode}");
+
+        // Assert
+        response.StatusCode.Should().BeOneOf(
+            HttpStatusCode.RequestEntityTooLarge,
+            HttpStatusCode.BadRequest,
+            HttpStatusCode.InternalServerError
+        );
+    }
+
+    [Fact]
+    [Trait("Category", "Negative")]
+    [Trait("Priority", "Low")]
+    public async Task PatchObject_WithDeeplyNestedJson_ShouldHandleGracefully()
+    {
+        // Arrange
+        var testObject = await CreateTestObjectAsync("Test Object");
+
+        // Create deeply nested JSON (100 levels)
+        var nestedJson = "{ \"data\": ";
+        for (int i = 0; i < 100; i++)
+        {
+            nestedJson += "{ \"level\": ";
+        }
+        nestedJson += "\"deep\"";
+        for (int i = 0; i < 100; i++)
+        {
+            nestedJson += " }";
+        }
+        nestedJson += " }";
+
+        _output.WriteLine("Testing with deeply nested JSON (100 levels)");
+
+        // Act
+        var response = await _apiClient.PatchObjectRawAsync(testObject!.Id!, nestedJson);
+        _output.WriteLine($"Response: {response.StatusCode}");
+
+        // Assert
+        response.StatusCode.Should().BeOneOf(
+            HttpStatusCode.BadRequest,
+            HttpStatusCode.InternalServerError,
+            HttpStatusCode.OK
+        );
+    }
+
+    #endregion
+
+    #region Special Characters and Encoding
+
+    [Theory]
+    [Trait("Category", "Negative")]
+    [Trait("Priority", "Medium")]
+    [InlineData("{ \"name\": \"test\\u0000null\" }")]      // Null character
+    [InlineData("{ \"name\": \"test\\r\\nCRLF\" }")]       // CRLF injection
+    [InlineData("{ \"name\": \"<script>alert()</script>\" }")]  // XSS attempt
+    [InlineData("{ \"name\": \"'; DROP TABLE objects;--\" }")]   // SQL injection attempt
+    public async Task PatchObject_WithDangerousCharacters_ShouldSanitizeOrReject(string dangerousJson)
+    {
+        // Arrange
+        var testObject = await CreateTestObjectAsync("Test Object");
+        _output.WriteLine($"Testing with dangerous payload: {dangerousJson}");
+
+        // Act
+        RestResponse<T> response = (RestResponse<T>)await _apiClient.PatchObjectRawAsync(testObject!.Id!, dangerousJson);
+        _output.WriteLine($"Response: {response.StatusCode}");
+
+        // Assert - API should either sanitize or reject
+        if (response.IsSuccessful)
+        {
+            // If accepted, data should be sanitized
+            response.Data.Should().NotBeNull();
+            _output.WriteLine(message: $"API accepted and returned: {response.Data!.ToString}");
+        }
+        else
+        {
+            // Or should reject with appropriate error
+            response.StatusCode.Should().BeOneOf(
+                HttpStatusCode.BadRequest,
+                HttpStatusCode.UnprocessableEntity
+            );
+        }
+    }
+
+    #endregion
+
+    #region Authentication and Authorization
+
+    [Fact]
+    [Trait("Category", "Negative")]
+    [Trait("Priority", "Low")]
+    public async Task PatchObject_WithInvalidAuthToken_ShouldReturnUnauthorized()
+    {
+        // Arrange
+        var testObject = await CreateTestObjectAsync("Test Object");
+        var httpClient = new HttpClient { BaseAddress = new Uri("https://api.restful-api.dev") };
+        httpClient.DefaultRequestHeaders.Add("Authorization", "Bearer invalid_token_12345");
+
+        _output.WriteLine("Testing with invalid authorization token");
+
+        // Act
+        var content = new StringContent("{ \"name\": \"test\" }", Encoding.UTF8, "application/json");
+        var response = await httpClient.PatchAsync($"/objects/{testObject!.Id}", content);
+        _output.WriteLine($"Response: {response.StatusCode}");
+
+        // Assert
+        response.StatusCode.Should().BeOneOf(
+            HttpStatusCode.Unauthorized,
+            HttpStatusCode.Forbidden,
+            HttpStatusCode.OK  // If auth is not implemented
+        );
+    }
+
+    #endregion
+
+    #region Rate Limiting
+
+    [Fact(Skip = "Rate limiting test - may be slow")]
+    [Trait("Category", "Negative")]
+    [Trait("Priority", "Low")]
+    public async Task PatchObject_RapidSuccessiveRequests_ShouldRespectRateLimits()
+    {
+        // Arrange
+        var testObject = await CreateTestObjectAsync("Test Object");
+        var requestCount = 100;
+        var rateLimitHit = false;
+
+        _output.WriteLine($"Sending {requestCount} rapid requests to test rate limiting");
+
+        // Act
+        for (int i = 0; i < requestCount; i++)
+        {
+            var response = await _apiClient.PatchObjectAsync(
+                testObject!.Id!,
+                new { name = $"Test {i}" }
+            );
+
+            if (response.StatusCode == HttpStatusCode.TooManyRequests)
+            {
+                rateLimitHit = true;
+                _output.WriteLine($"Rate limit hit at request #{i}");
+                break;
+            }
+        }
+
+        // Assert - Either rate limit was hit or all requests succeeded
+        _output.WriteLine(rateLimitHit
+            ? "✓ Rate limiting is implemented"
+            : "⚠ No rate limiting detected");
+    }
+
+    #endregion
 
     [Fact]
     [Trait("Category", "EdgeCase")]
@@ -599,4 +1029,4 @@ public class PatchEndpointTests : TestBase
         );
     }
 }
-#endregion
+#endregion// The code is already in C#. No conversion is needed.

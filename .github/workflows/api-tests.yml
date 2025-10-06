@@ -1,83 +1,100 @@
-name: API Tests CI Pipeline
+name: Enhanced API Tests with Reporting
 
-# Trigger the workflow on push or pull request
 on:
   push:
     branches: [ master ]
   pull_request:
     branches: [ master ]
-  workflow_dispatch:  # Allows manual triggering from GitHub UI
+  workflow_dispatch:
+  schedule:
+    - cron: '0 0 * * *'  # Daily at midnight
 
 env:
   DOTNET_VERSION: '8.0.x'
 
 jobs:
-  test:
-    name: Run API Tests
+  lint-and-format:
+    name: Code Quality Checks
     runs-on: windows-latest
     
     steps:
-      # Step 1: Checkout the repository
+      - uses: actions/checkout@v4
+      
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+      
+      - name: Install dotnet-format
+        run: dotnet tool install -g dotnet-format
+      
+      - name: Check code formatting
+        shell: pwsh
+        run: |
+          $project = Get-ChildItem -Recurse -Filter "*.csproj" | Select-Object -First 1
+          dotnet format $project.FullName --verify-no-changes --verbosity diagnostic
+        continue-on-error: true
+      
+      - name: Run code analysis
+        shell: pwsh
+        run: |
+          $project = Get-ChildItem -Recurse -Filter "*.csproj" | Select-Object -First 1
+          dotnet build $project.FullName /p:TreatWarningsAsErrors=false /p:RunAnalyzersDuringBuild=true
+
+  test:
+    name: Run API Tests
+    runs-on: windows-latest
+    needs: lint-and-format
+    
+    steps:
       - name: 📥 Checkout Repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      # Step 2: List directory structure for debugging
-      - name: 🔍 Debug - List Directory Structure
-        shell: pwsh
-        run: |
-          Write-Host "Current directory:"
-          Get-Location
-          Write-Host "`nDirectory contents:"
-          Get-ChildItem -Recurse -Depth 2 | Select-Object FullName
-
-      # Step 3: Setup .NET SDK
-      - name: 🔧 Setup .NET ${{ env.DOTNET_VERSION }}
+      - name: 🔧 Setup .NET
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
 
-      # Step 4: Display .NET version
-      - name: 📋 Display .NET version
-        run: dotnet --version
-
-      # Step 5: Find and restore project
       - name: 📦 Restore Dependencies
         shell: pwsh
         run: |
-          $projectFile = Get-ChildItem -Recurse -Filter "*.csproj" | Select-Object -First 1
-          if ($projectFile) {
-            Write-Host "Found project file: $($projectFile.FullName)"
-            dotnet restore $projectFile.FullName
-          } else {
-            Write-Error "No .csproj file found!"
-            exit 1
-          }
+          $project = Get-ChildItem -Recurse -Filter "*.csproj" | Select-Object -First 1
+          Write-Host "Restoring: $($project.FullName)"
+          dotnet restore $project.FullName
 
-      # Step 6: Build the project
       - name: 🏗️ Build Project
         shell: pwsh
         run: |
-          $projectFile = Get-ChildItem -Recurse -Filter "*.csproj" | Select-Object -First 1
-          dotnet build $projectFile.FullName --configuration Release --no-restore
+          $project = Get-ChildItem -Recurse -Filter "*.csproj" | Select-Object -First 1
+          dotnet build $project.FullName --configuration Release --no-restore
 
-      # Step 7: Run the tests
-      - name: 🧪 Run API Tests
+      - name: 🧪 Run Tests with Coverage
         shell: pwsh
         run: |
-          $projectFile = Get-ChildItem -Recurse -Filter "*.csproj" | Select-Object -First 1
-          dotnet test $projectFile.FullName `
+          $project = Get-ChildItem -Recurse -Filter "*.csproj" | Select-Object -First 1
+          dotnet test $project.FullName `
             --configuration Release `
             --no-build `
-            --verbosity normal `
+            --verbosity detailed `
             --logger "trx;LogFileName=test-results.trx" `
             --logger "html;LogFileName=test-results.html" `
+            --logger "console;verbosity=detailed" `
+            --collect:"XPlat Code Coverage" `
             --results-directory TestResults
         continue-on-error: true
 
-      # Step 8: Publish test results
-      - name: 📊 Publish Test Results
+      - name: 📊 Generate Coverage Report
+        uses: danielpalme/ReportGenerator-GitHub-Action@5.2.0
+        if: always()
+        with:
+          reports: 'TestResults/**/coverage.cobertura.xml'
+          targetdir: 'CoverageReport'
+          reporttypes: 'Html;Badges'
+        continue-on-error: true
+
+      - name: 📈 Publish Test Results
         uses: EnricoMi/publish-unit-test-result-action/composite@v2
         if: always()
         with:
@@ -85,51 +102,119 @@ jobs:
             TestResults/**/*.trx
           check_name: 'API Test Results'
           comment_title: '🧪 API Test Results'
+          report_individual_runs: true
+          deduplicate_classes_by_file_name: false
 
-      # Step 9: Upload test results as artifacts
-      - name: 📤 Upload Test Results Artifact
+      - name: 📤 Upload Test Results
         uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: test-results
-          path: TestResults/
+          name: test-results-${{ github.run_number }}
+          path: |
+            TestResults/
+            CoverageReport/
           retention-days: 30
 
-      # Step 10: Generate test summary
-      - name: 📝 Generate Test Summary
+      - name: 📤 Upload Coverage Badge
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-badge
+          path: CoverageReport/badge_*.svg
+        continue-on-error: true
+
+      - name: 📝 Generate Detailed Summary
         if: always()
         shell: pwsh
         run: |
           $summary = @"
-          # 🧪 API Test Execution Summary
+          # 🧪 Comprehensive API Test Report
           
-          ## Test Configuration
+          ## 📋 Test Configuration
           - **API Under Test**: restful-api.dev
-          - **Endpoint Tested**: PATCH /objects/{id}
+          - **Primary Endpoint**: PATCH /objects/{id}
           - **.NET Version**: ${{ env.DOTNET_VERSION }}
           - **OS**: Windows
+          - **Run ID**: #${{ github.run_number }}
           - **Run Date**: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss UTC')
-          - **Commit**: ${{ github.sha }}
+          - **Commit**: [${{ github.sha }}](https://github.com/${{ github.repository }}/commit/${{ github.sha }})
+          - **Branch**: ${{ github.ref_name }}
+          - **Triggered By**: ${{ github.event_name }}
+          
+          "@ 
+          
+          # Test Results
+          if (Test-Path "TestResults\test-results.trx") {
+            [xml]$trx = Get-Content "TestResults\test-results.trx"
+            $total = $trx.TestRun.ResultSummary.Counters.total
+            $passed = $trx.TestRun.ResultSummary.Counters.passed
+            $failed = $trx.TestRun.ResultSummary.Counters.failed
+            $skipped = $trx.TestRun.ResultSummary.Counters.inconclusive
+            
+            $summary += @"
+          ## 📊 Test Results Summary
+          
+          | Metric | Count |
+          |--------|-------|
+          | ✅ **Passed** | $passed / $total |
+          | ❌ **Failed** | $failed / $total |
+          | ⏭️ **Skipped** | $skipped / $total |
+          | 📈 **Success Rate** | $(if($total -gt 0) { [math]::Round(($passed / $total) * 100, 2) } else { 0 })% |
           
           "@
-          
-          if (Test-Path "TestResults\test-results.trx") {
-            $summary += "`n✅ Test results generated successfully`n"
-            $summary += "`n📊 Test results are available in the artifacts section`n"
+            
+            if ($failed -gt 0) {
+              $summary += "`n## ❌ Failed Tests`n`n"
+              $failedTests = $trx.TestRun.Results.UnitTestResult | Where-Object { $_.outcome -eq "Failed" }
+              foreach ($test in $failedTests) {
+                $summary += "- **$($test.testName)**`n"
+                if ($test.Output.ErrorInfo.Message) {
+                  $summary += "  - Error: $($test.Output.ErrorInfo.Message)`n"
+                }
+              }
+            }
           } else {
             $summary += "`n⚠️ Test results file not found`n"
           }
           
+          # Coverage Information
+          if (Test-Path "CoverageReport\index.html") {
+            $summary += @"
+          
+          ## 📊 Code Coverage
+          
+          Coverage report generated successfully. Download artifacts to view detailed coverage.
+          
+          "@
+          }
+          
+          # Artifacts
+          $summary += @"
+          
+          ## 📦 Artifacts
+          
+          - 📄 **Test Results**: HTML and TRX formats available in artifacts
+          - 📊 **Coverage Report**: Detailed code coverage analysis
+          - 🏷️ **Coverage Badge**: SVG badge for README
+          
+          ## 🔗 Quick Links
+          
+          - [View Test Results](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+          - [Download Artifacts](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}#artifacts)
+          
+          "@
+          
           Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value $summary
 
-      # Step 11: Check test outcome and fail if needed
       - name: ✅ Verify Test Results
         shell: pwsh
         run: |
           if (Test-Path "TestResults\test-results.trx") {
-            $content = Get-Content "TestResults\test-results.trx" -Raw
-            if ($content -match 'outcome="Failed"') {
-              Write-Host "❌ Some tests failed!"
+            [xml]$trx = Get-Content "TestResults\test-results.trx"
+            $failed = [int]$trx.TestRun.ResultSummary.Counters.failed
+            
+            if ($failed -gt 0) {
+              Write-Host "❌ $failed test(s) failed!"
               exit 1
             } else {
               Write-Host "✅ All tests passed!"
@@ -139,21 +224,16 @@ jobs:
             exit 1
           }
 
-  # Job for reporting status
-  report-status:
-    name: Report Status
+  notify:
+    name: Send Notifications
     runs-on: windows-latest
     needs: test
     if: always()
     
     steps:
-      - name: 📢 Report Success
-        if: needs.test.result == 'success'
-        run: |
-          echo "::notice::✅ All API tests passed successfully!"
-          
-      - name: 📢 Report Failure
+      - name: 📧 Notify on Failure
         if: needs.test.result == 'failure'
         run: |
-          echo "::error::❌ Some API tests failed. Please check the test results."
-          exit 1
+          echo "::error::API tests failed! Check the test results for details."
+          echo "Run ID: ${{ github.run_id }}"
+          echo "Commit: ${{ github.sha }}"
