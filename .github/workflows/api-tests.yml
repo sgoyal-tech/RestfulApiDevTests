@@ -98,13 +98,15 @@ jobs:
         uses: dorny/test-reporter@v1
         if: always()
         with:
-          files: |
-            TestResults/**/*.trx
-          check_name: 'API Test Results'
-          comment_title: '🧪 API Test Results'
-          token: ${{ secrets.GITHUB_TOKEN }}
-          report_individual_runs: true
-          deduplicate_classes_by_file_name: false
+        name: .NET Test Results
+        path: TestResults/**/*.trx
+        reporter: dotnet-trx
+        check_name: 'API Test Results'
+        comment_title: '🧪 API Test Results'
+        token: ${{ secrets.GITHUB_TOKEN }}
+        report_individual_runs: true
+        deduplicate_classes_by_file_name: false
+    
 
       - name: 📤 Upload Test Results
         uses: actions/upload-artifact@v4
