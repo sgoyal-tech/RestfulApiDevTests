@@ -27,6 +27,58 @@ public class ApiClient : IDisposable
         _logger = logger;
     }
 
+    //Post Request with error handling
+
+    public async Task<ApiResponse<ApiObject>> CreateObjectAsync(object postData, JsonContent content)
+    {
+        if (postData == null)
+        {
+            throw new ArgumentNullException(nameof(postData));
+        }
+        return await ExecuteWithRetryAsync(async () =>
+        {
+            try
+            {
+                _logger?.LogInfo("POST /objects");
+                _logger?.LogDebug($"Payload: {JsonSerializer.Serialize(postData)}");
+                var startTime = DateTime.UtcNow;
+                var response = await _httpClient.PostAsJsonAsync("/objects", postData);
+                var duration = (DateTime.UtcNow - startTime).TotalMilliseconds;
+                _logger?.LogInfo($"Response: {(int)response.StatusCode} {response.StatusCode} ({duration}ms)");
+                var data = response.IsSuccessStatusCode
+                    ? await SafeDeserializeAsync<ApiObject>(response)
+                    : null;
+                return new ApiResponse<ApiObject>(
+                    response.StatusCode,
+                    data,
+                    response.Content.Headers.ContentType?.MediaType,
+                    response.IsSuccessStatusCode,
+                    (long)duration
+                );
+            }
+            catch (HttpRequestException ex)
+            {
+                _logger?.LogError($"HTTP request failed: {ex.Message}", ex);
+                throw new ApiException("HTTP request failed", ex);
+            }
+            catch (TaskCanceledException ex)
+            {
+                _logger?.LogError($"Request timeout: {ex.Message}", ex);
+                throw new ApiException("Request timed out", ex);
+            }
+            catch (JsonException ex)
+            {
+                _logger?.LogError($"JSON deserialization failed: {ex.Message}", ex);
+                throw new ApiException("Failed to parse API response", ex);
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogError($"Unexpected error: {ex.Message}", ex);
+                throw new ApiException("Unexpected error occurred", ex);
+            }
+        });
+    }
+
     /// <summary>
     /// PATCH request with comprehensive error handling
     /// </summary>
@@ -269,6 +321,7 @@ public class ApiClient : IDisposable
     {
         _httpClient?.Dispose();
     }
+
 }
 
 /// <summary>

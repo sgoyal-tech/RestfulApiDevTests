@@ -3,6 +3,8 @@ using RestfulApiDevTests.Models;
 using RestfulApiDevTests.Utilities;
 using Xunit.Abstractions;
 using System.Net.Http.Json;
+using NPOI.SS.UserModel;
+using RestSharp;
 
 namespace RestfulApiDevTests.Tests;
 
@@ -69,7 +71,10 @@ public abstract class TestBase : IDisposable
             _logger.LogApiRequest("POST", "/objects", objectData);
 
             var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+
+            // Use HttpClient directly for POST (not in ImprovedApiClient)
             var response = await _httpClient.PostAsJsonAsync("/objects", objectData);
+
             stopwatch.Stop();
 
             _logger.LogApiResponse(
@@ -81,6 +86,7 @@ public abstract class TestBase : IDisposable
 
             if (response.IsSuccessStatusCode)
             {
+                // Read response content
                 var createdObject = await response.Content.ReadFromJsonAsync<ApiObject>();
 
                 if (createdObject?.Id != null)

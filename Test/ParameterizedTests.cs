@@ -255,6 +255,8 @@ public class ParameterizedTests : TestBase
     {
         // Arrange
         var testObject = await CreateTestObjectAsync("Performance Test");
+        Assert.NotNull(testObject); // Ensure testObject is not null
+        Assert.False(string.IsNullOrWhiteSpace(testObject.Id), "Test object ID should not be null or empty");
         _output.WriteLine($"Testing: {description}");
 
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
