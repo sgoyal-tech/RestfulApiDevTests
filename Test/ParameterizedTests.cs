@@ -38,16 +38,31 @@ public class ParameterizedTests : TestBase
     {
         // Arrange
         var testObject = await CreateTestObjectAsync("Initial Name");
+
+        // Validate test object creation
+        testObject.Should().NotBeNull($"Failed to create test object for test case: {name}");
+
+        if (testObject == null)
+        {
+            _output.WriteLine($"⚠️ Skipping test for '{name}' - failed to create test object");
+            return;
+        }
+
+        testObject.Id.Should().NotBeNullOrWhiteSpace($"Test object ID should be valid for test case: {name}");
+
         _output.WriteLine($"Testing with name='{name}', data={System.Text.Json.JsonSerializer.Serialize(data)}");
+        _output.WriteLine($"Test object ID: {testObject.Id}");
 
         var updateData = new { name, data };
 
         // Act
-        var response = await _apiClient.PatchObjectAsync(testObject!.Id!, updateData);
+        var response = await _apiClient.PatchObjectAsync(testObject.Id!, updateData);
 
         // Assert
-        response.StatusCode.Should().Be(HttpStatusCode.OK);
-        response.Data.Should().NotBeNull();
+        _output.WriteLine($"Response status: {response.StatusCode}");
+        response.StatusCode.Should().Be(HttpStatusCode.OK,
+            $"Test case '{name}' should succeed");
+        response.Data.Should().NotBeNull($"Response data should not be null for test case: {name}");
         response.Data!.Name.Should().Be(name);
         _output.WriteLine($"✓ Test passed for: {name}");
     }
@@ -404,28 +419,43 @@ public class ParameterizedTests : TestBase
                 new { data = new Dictionary<string, object?> { { "color", "Blue" } } }
             }
         };
-
     [Theory]
     [MemberData(nameof(CrossFieldTestCases))]
     [Trait("Category", "Parameterized")]
     [Trait("Priority", "Medium")]
     public async Task PatchObject_WithVariousFieldCombinations_ShouldSucceed(
-        string description,
-        object updateData)
+           string description,
+           object updateData)
     {
         // Arrange
         var testObject = await CreateTestObjectAsync("Original Object");
+
+        // Validate test object creation
+        testObject.Should().NotBeNull($"Failed to create test object for: {description}");
+
+        if (testObject == null)
+        {
+            _output.WriteLine($"⚠️ Skipping test '{description}' - failed to create test object");
+            return;
+        }
+
+        testObject.Id.Should().NotBeNullOrWhiteSpace($"Test object ID should be valid for: {description}");
+
         _output.WriteLine($"Testing: {description}");
+        _output.WriteLine($"Test object ID: {testObject.Id}");
         _output.WriteLine($"Update data: {System.Text.Json.JsonSerializer.Serialize(updateData)}");
 
         // Act
-        var response = await _apiClient.PatchObjectAsync(testObject!.Id!, updateData);
+        var response = await _apiClient.PatchObjectAsync(testObject.Id!, updateData);
 
         // Assert
-        response.StatusCode.Should().Be(HttpStatusCode.OK);
-        response.Data.Should().NotBeNull();
+        _output.WriteLine($"Response status: {response.StatusCode}");
+        response.StatusCode.Should().Be(HttpStatusCode.OK,
+            $"Test '{description}' should succeed");
+        response.Data.Should().NotBeNull($"Response data should not be null for: {description}");
         _output.WriteLine($"✓ {description} test passed");
     }
+
 
     #endregion
 
